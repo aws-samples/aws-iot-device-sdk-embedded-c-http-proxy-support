@@ -1,0 +1,382 @@
+diff --git a/include/aws_iot_mqtt_client.h b/include/aws_iot_mqtt_client.h
+index 66894ce..abbb202 100644
+--- a/include/aws_iot_mqtt_client.h
++++ b/include/aws_iot_mqtt_client.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright 2010-2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
++ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License").
+  * You may not use this file except in compliance with the License.
+@@ -178,6 +178,14 @@ typedef struct {
+ #ifdef _ENABLE_THREAD_SUPPORT_
+ 	bool isBlockOnThreadLockEnabled;		///< Timeout for Thread blocking calls. Set to 0 to block until lock is obtained. In milliseconds
+ #endif
++
++	/* Proxy Settings */
++	Proxy_Type_t proxyType;         ///< PROXY_DISABLED (0) to disable the proxy; or Proxy_HTTP to use a HTTP proxy
++	char *pProxyHostURL;            ///< Pointer to a string defining the host endpoint for the proxy server
++	uint16_t proxyPort;             ///< Proxy server listening port
++	bool isAuthenticationRequired;  ///< Set to true to enable username/password authentication
++	char *pProxyUserName;           ///< Pointer to a string defining the username for proxy authentication
++	char *pProxyPassword;           ///< Pointer to a string defining the password for proxy authentication
+ } IoT_Client_Init_Params;
+ extern const IoT_Client_Init_Params iotClientInitParamsDefault;
+ 
+diff --git a/include/network_interface.h b/include/network_interface.h
+index cf28341..036a36a 100644
+--- a/include/network_interface.h
++++ b/include/network_interface.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright 2010-2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
++ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License").
+  * You may not use this file except in compliance with the License.
+@@ -57,6 +57,32 @@ typedef struct {
+ 	bool ServerVerificationFlag;        ///< Boolean.  True = perform server certificate hostname validation.  False = skip validation \b NOT recommended.
+ } TLSConnectParams;
+ 
++/**
++ * @brief Proxy Type
++ *
++ * Defining a Proxy Type. Only HTTP Proxy is supported at this time
++ *
++ */
++typedef enum {
++	PROXY_DISABLED = 0, 	///< PROXY_DISABLED (0) to disable the proxy; or Proxy_HTTP to use a HTTP proxy
++	PROXY_HTTP 				///< HTTP Proxy that supports HTTP Connect method
++} Proxy_Type_t;
++
++/**
++ * @brief Proxy Parameters
++ *
++ * Defines a type containing Proxy specific parameters to be passed down to the
++ * TLS networking layer to create a TLS secured socket.
++ */
++typedef struct {
++	Proxy_Type_t proxyType; ///< By default proxy is disabled
++	char *pProxyHostURL; ///< Pointer to a string defining the host endpoint for the proxy server
++	uint16_t proxyPort; ///< Proxy server listening port
++	bool isAuthenticationRequired; ///< Set to true to enable username/password authentication
++	char *pProxyUserName; ///< Pointer to a string defining the username for proxy authentication
++	char *pProxyPassword; ///< Pointer to a string defining the password for proxy authentication
++} ProxyParams;
++
+ /**
+  * @brief Network Structure
+  *
+@@ -73,6 +99,7 @@ struct Network {
+ 
+ 	TLSConnectParams tlsConnectParams;        ///< TLSConnect params structure containing the common connection parameters
+ 	TLSDataParams tlsDataParams;            ///< TLSData params structure containing the connection data parameters that are specific to the library being used
++	ProxyParams proxyParams;				///< Proxy params structure containing proxy connection data.
+ };
+ 
+ /**
+@@ -97,6 +124,25 @@ IoT_Error_t iot_tls_init(Network *pNetwork, char *pRootCALocation, char *pDevice
+ 						 char *pDevicePrivateKeyLocation, char *pDestinationURL,
+ 						 uint16_t DestinationPort, uint32_t timeout_ms, bool ServerVerificationFlag);
+ 
++/**
++ * @brief Initialize the proxy settings of the Network stack.
++ *
++ * Perform any proxy initialization required by the TLS/Network layer.
++ *
++ * @param pNetwork - Pointer to a Network struct defining the network interface.
++ * @param ProxyType - If this parameter is set to PROXY_DISABLED, all other parameters are ignored and you can set them to any value
++ * @param pProxyHostURL - The null-terminated proxy server endpoint
++ * @param ProxyPort - The port of the proxy server
++ * @param AuthenticationRequiredFlag - used to decide whether authentication is needed or not
++ * @param pProxyUserName - The null-terminated username for authentication
++ * @param pProxyPassword - The null-terminated password for authentication
++ *
++ * @return IoT_Error_t - successful initialization or Network error
++ */
++IoT_Error_t iot_proxy_init(Network *pNetwork, Proxy_Type_t ProxyType, char *pProxyHostURL,
++                           uint16_t ProxyPort, bool AuthenticationRequiredFlag,
++                           char *pProxyUserName, char *pProxyPassword);
++
+ /**
+  * @brief Create a TLS socket and open the connection
+  *
+diff --git a/platform/linux/mbedtls/network_mbedtls_wrapper.c b/platform/linux/mbedtls/network_mbedtls_wrapper.c
+index 7443d17..bde852b 100644
+--- a/platform/linux/mbedtls/network_mbedtls_wrapper.c
++++ b/platform/linux/mbedtls/network_mbedtls_wrapper.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright 2010-2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
++ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License").
+  * You may not use this file except in compliance with the License.
+@@ -38,6 +38,31 @@ extern "C" {
+ #define MBEDTLS_DEBUG_BUFFER_SIZE 2048
+ #endif
+ 
++/* This is the length of the HTTP Connect request without the Proxy-Authorization header and host:port values, excluding terminating null char */
++#define HTTP_CONNECT_REQUEST_BASE_LEN 62
++
++/* This is the length of the HTTP Connect request Proxy-Authorization header, without the base64 encoded credentials, excluding terminating null char */
++#define HTTP_CONNECT_AUTH_HEADER_BASE_LEN 29
++
++/* This is the length limit of the HTTP proxy credentials <username>:<password>, including the colon, excluding terminating null char */
++#define HTTP_PROXY_CREDENTIALS_LEN_LIMIT 64
++
++/* This is the length of the base64 encoded HTTP proxy credentials <username>:<password>, excluding terminating null char */
++#define HTTP_PROXY_ENCODED_CREDENTIALS_LEN (HTTP_PROXY_CREDENTIALS_LEN_LIMIT + 2) / 3 * 4
++
++/* This is max length of the AWS IoT endpoint host, excluding terminating null char */
++#define AWS_IOT_MQTT_HOST_LEN_MAX 60
++/* This is max length of the AWS IoT endpoint port, excluding terminating null char */
++#define AWS_IOT_MQTT_PORT_LEN_MAX 5
++
++/* This is the max length of the HTTP Connect request buffer, with an extra space for null terminating char */
++#define HTTP_CONNECT_REQUEST_BUF_LEN_MAX HTTP_CONNECT_REQUEST_BASE_LEN + HTTP_CONNECT_AUTH_HEADER_BASE_LEN \
++										 + 2 * (AWS_IOT_MQTT_HOST_LEN_MAX + AWS_IOT_MQTT_PORT_LEN_MAX) \
++										 + HTTP_PROXY_ENCODED_CREDENTIALS_LEN + 1
++
++/* This is the buffer position offset of the raw credentials that is temporarily stored in the request buffer */
++#define RAW_CREDENTIALS_OFFSET HTTP_CONNECT_REQUEST_BUF_LEN_MAX - HTTP_PROXY_CREDENTIALS_LEN_LIMIT - 1
++
+ /*
+  * This is a function to do further verification if needed on the cert received
+  */
+@@ -90,11 +115,112 @@ IoT_Error_t iot_tls_init(Network *pNetwork, char *pRootCALocation, char *pDevice
+ 	return SUCCESS;
+ }
+ 
++IoT_Error_t iot_proxy_init(Network *pNetwork, Proxy_Type_t ProxyType, char *pProxyHostURL,
++						 uint16_t ProxyPort, bool AuthenticationRequiredFlag,
++						 char *pProxyUserName, char *pProxyPassword) {
++	if (ProxyType == PROXY_DISABLED) {
++		return SUCCESS;
++	}
++
++	IOT_DEBUG("  . Proxy configurations init ...");
++
++	pNetwork->proxyParams.proxyType = ProxyType;
++	pNetwork->proxyParams.pProxyHostURL = pProxyHostURL;
++	pNetwork->proxyParams.proxyPort = ProxyPort;
++	pNetwork->proxyParams.isAuthenticationRequired = AuthenticationRequiredFlag;
++	pNetwork->proxyParams.pProxyUserName = pProxyUserName;
++	pNetwork->proxyParams.pProxyPassword = pProxyPassword;
++
++	return SUCCESS;
++}
++
+ IoT_Error_t iot_tls_is_connected(Network *pNetwork) {
+ 	/* Use this to add implementation which can check for physical layer disconnect */
+ 	return NETWORK_PHYSICAL_LAYER_CONNECTED;
+ }
+ 
++static IoT_Error_t _iot_http_proxy_connect(Network *pNetwork, char *pRemoteHost, uint16_t remotePort) {
++	int ret = -1;
++	int statusCode = -1;
++	size_t offset = 0;
++	size_t credentialsSize = 0;
++	size_t olen = 0;
++	unsigned char buffer[HTTP_CONNECT_REQUEST_BUF_LEN_MAX];
++
++	// Build HTTP CONNECT request
++	offset += snprintf(buffer, sizeof(buffer),
++				"CONNECT %s:%d HTTP/1.1\r\n"
++				"Host: %s:%d\r\n"
++				"Proxy-Connection: Keep-Alive\r\n",
++				pRemoteHost, remotePort,
++				pRemoteHost, remotePort);
++
++	// Build Authorization Header if required
++	if(pNetwork->proxyParams.isAuthenticationRequired) {
++		offset += snprintf(buffer + offset, sizeof(buffer) - offset, "Proxy-Authorization: Basic ");
++
++		if(HTTP_PROXY_CREDENTIALS_LEN_LIMIT < strlen(pNetwork->proxyParams.pProxyUserName) \
++			 + strlen(pNetwork->proxyParams.pProxyPassword) + 1) {
++			IOT_ERROR(" failed! proxy credentials are too long: <user:pass> limit %d \n\n", HTTP_PROXY_CREDENTIALS_LEN_LIMIT);
++			return NETWORK_ERR_NET_CONNECT_FAILED;
++		}
++
++		credentialsSize = snprintf(buffer + RAW_CREDENTIALS_OFFSET,  HTTP_PROXY_CREDENTIALS_LEN_LIMIT + 1, "%s:%s",
++			pNetwork->proxyParams.pProxyUserName,
++			pNetwork->proxyParams.pProxyPassword
++		);
++
++		if((ret = mbedtls_base64_encode(buffer + offset, sizeof(buffer) - offset, &olen, \
++				buffer + RAW_CREDENTIALS_OFFSET, credentialsSize)) != 0) {
++			IOT_ERROR(" failed to base64_encode proxy credentials -0x%x\n\n", -ret);
++			return ret;
++		}
++		offset += olen;
++		offset += snprintf(buffer + offset, sizeof(buffer) - offset, "\r\n");
++	}
++	offset += snprintf(buffer + offset, sizeof(buffer) - offset, "\r\n");
++
++	buffer[offset] = '\0';
++	IOT_DEBUG("HTTP Connect Request:");
++	IOT_DEBUG(buffer);
++
++	// Send HTTP CONNECT request
++	ret = mbedtls_net_send(&(pNetwork->tlsDataParams.server_fd), buffer, offset);
++	IOT_DEBUG("send HTTP request %d\n", ret);
++	if(ret < 0) {
++		IOT_ERROR(" failed\n  !  send returned -0x%x\n\n", -ret);
++		return NETWORK_ERR_NET_CONNECT_FAILED;
++	}
++	IOT_DEBUG(" ok\n");
++
++	// Receive HTTP response
++	memset(buffer, 0, sizeof(buffer));
++	ret = mbedtls_net_recv(&(pNetwork->tlsDataParams.server_fd), buffer, sizeof(buffer));
++	IOT_DEBUG("receive HTTP response %d\n", ret);
++	buffer[ret] = '\0';
++
++	IOT_DEBUG(buffer);
++	if(ret < 0) {
++		IOT_ERROR(" failed\n  !  recv returned -0x%x\n\n", -ret);
++		return NETWORK_ERR_NET_CONNECT_FAILED;
++	}
++	IOT_DEBUG(" ok\n");
++
++	// Extract status code
++	ret = sscanf(buffer, "HTTP/%*s %d", &statusCode);
++	if(ret != 1) {
++		IOT_ERROR(" failed\n  !  mal-formed response from HTTP proxy \n\n");
++		return NETWORK_ERR_NET_CONNECT_FAILED;
++	}
++
++	if (statusCode >= 400 || statusCode < 200) {
++		IOT_ERROR(" failed\n  !  invalid HTTP response from proxy server %d\n\n", statusCode);
++		return NETWORK_ERR_NET_CONNECT_FAILED;
++	}
++
++	return SUCCESS;
++}
++
+ IoT_Error_t iot_tls_connect(Network *pNetwork, TLSConnectParams *params) {
+ 	int ret = 0;
+ 	const char *pers = "aws_iot_tls_wrapper";
+@@ -102,9 +228,10 @@ IoT_Error_t iot_tls_connect(Network *pNetwork, TLSConnectParams *params) {
+ 	char portBuffer[6];
+ 	char vrfy_buf[512];
+ 	const char *alpnProtocols[] = { "x-amzn-mqtt-ca", NULL };
++	const char *pHost = pNetwork->tlsConnectParams.pDestinationURL;
+ 
+ #ifdef ENABLE_IOT_DEBUG
+-	unsigned char buf[MBEDTLS_DEBUG_BUFFER_SIZE];
++	static unsigned char buf[MBEDTLS_DEBUG_BUFFER_SIZE];
+ #endif
+ 
+ 	if(NULL == pNetwork) {
+@@ -158,9 +285,19 @@ IoT_Error_t iot_tls_connect(Network *pNetwork, TLSConnectParams *params) {
+ 	}
+ 	IOT_DEBUG(" ok\n");
+ 	snprintf(portBuffer, 6, "%d", pNetwork->tlsConnectParams.DestinationPort);
+-	IOT_DEBUG("  . Connecting to %s/%s...", pNetwork->tlsConnectParams.pDestinationURL, portBuffer);
+-	if((ret = mbedtls_net_connect(&(tlsDataParams->server_fd), pNetwork->tlsConnectParams.pDestinationURL,
+-								  portBuffer, MBEDTLS_NET_PROTO_TCP)) != 0) {
++
++	if(pNetwork->proxyParams.proxyType == PROXY_HTTP) {
++		pHost = pNetwork->proxyParams.pProxyHostURL;
++		snprintf(portBuffer, sizeof(portBuffer), "%d", pNetwork->proxyParams.proxyPort);
++		IOT_DEBUG("  . Connecting to %s/%d via HTTP proxy %s/%s",
++			pNetwork->tlsConnectParams.pDestinationURL, pNetwork->tlsConnectParams.DestinationPort,
++			pHost, portBuffer
++		);
++	} else {
++		IOT_DEBUG("  . Connecting to %s/%s...", pNetwork->tlsConnectParams.pDestinationURL, portBuffer);
++	}
++
++	if((ret = mbedtls_net_connect(&(tlsDataParams->server_fd), pHost, portBuffer, MBEDTLS_NET_PROTO_TCP)) != 0) {
+ 		IOT_ERROR(" failed\n  ! mbedtls_net_connect returned -0x%x\n\n", -ret);
+ 		switch(ret) {
+ 			case MBEDTLS_ERR_NET_SOCKET_FAILED:
+@@ -173,6 +310,18 @@ IoT_Error_t iot_tls_connect(Network *pNetwork, TLSConnectParams *params) {
+ 		};
+ 	}
+ 
++	if(pNetwork->proxyParams.proxyType == PROXY_HTTP) {
++		ret = _iot_http_proxy_connect(
++			pNetwork,
++			pNetwork->tlsConnectParams.pDestinationURL,
++			pNetwork->tlsConnectParams.DestinationPort
++		);
++		if(ret != SUCCESS) {
++			IOT_ERROR(" failed\n  ! cannot connect to HTTP proxy server\n\n");
++			return NETWORK_ERR_NET_CONNECT_FAILED;
++		}
++	}
++
+ 	ret = mbedtls_net_set_block(&(tlsDataParams->server_fd));
+ 	if(ret != 0) {
+ 		IOT_ERROR(" failed\n  ! net_set_(non)block() returned -0x%x\n\n", -ret);
+diff --git a/platform/linux/mbedtls/network_platform.h b/platform/linux/mbedtls/network_platform.h
+index c2810a1..b4aa332 100644
+--- a/platform/linux/mbedtls/network_platform.h
++++ b/platform/linux/mbedtls/network_platform.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright 2010-2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
++ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License").
+  * You may not use this file except in compliance with the License.
+@@ -27,6 +27,7 @@
+ #include "mbedtls/error.h"
+ #include "mbedtls/debug.h"
+ #include "mbedtls/timing.h"
++#include "mbedtls/base64.h"
+ 
+ #ifdef __cplusplus
+ extern "C" {
+diff --git a/src/aws_iot_mqtt_client.c b/src/aws_iot_mqtt_client.c
+index 6dcd15f..d93d735 100644
+--- a/src/aws_iot_mqtt_client.c
++++ b/src/aws_iot_mqtt_client.c
+@@ -1,5 +1,5 @@
+ /*
+-* Copyright 2015-2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
++* Copyright 2015-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License").
+ * You may not use this file except in compliance with the License.
+@@ -171,11 +171,11 @@ IoT_Error_t aws_iot_mqtt_set_connect_params(AWS_IoT_Client *pClient, IoT_Client_
+ 
+ IoT_Error_t aws_iot_mqtt_free(AWS_IoT_Client *pClient)
+ {
+-    IoT_Error_t rc = SUCCESS;
++	IoT_Error_t rc = SUCCESS;
+ 
+-    if (NULL == pClient) {
+-        rc = NULL_VALUE_ERROR;
+-    }else
++	if (NULL == pClient) {
++		rc = NULL_VALUE_ERROR;
++	}else
+ 	{
+ 	#ifdef _ENABLE_THREAD_SUPPORT_
+ 		if (rc == SUCCESS)
+@@ -199,7 +199,7 @@ IoT_Error_t aws_iot_mqtt_free(AWS_IoT_Client *pClient)
+ 	#endif
+ 	}
+ 
+-    FUNC_EXIT_RC(rc);
++	FUNC_EXIT_RC(rc);
+ }
+ 
+ IoT_Error_t aws_iot_mqtt_init(AWS_IoT_Client *pClient, IoT_Client_Init_Params *pInitParams) {
+@@ -263,6 +263,12 @@ IoT_Error_t aws_iot_mqtt_init(AWS_IoT_Client *pClient, IoT_Client_Init_Params *p
+ 					  pInitParams->pDevicePrivateKeyLocation, pInitParams->pHostURL, pInitParams->port,
+ 					  pInitParams->tlsHandshakeTimeout_ms, pInitParams->isSSLHostnameVerify);
+ 
++	if (SUCCESS == rc) {
++		rc = iot_proxy_init(&(pClient->networkStack), pInitParams->proxyType, pInitParams->pProxyHostURL,
++					  pInitParams->proxyPort, pInitParams->isAuthenticationRequired,
++					  pInitParams->pProxyUserName, pInitParams->pProxyPassword);
++	}
++
+ 	if(SUCCESS != rc) {
+ 		#ifdef _ENABLE_THREAD_SUPPORT_
+ 		(void)aws_iot_thread_mutex_destroy(&(pClient->clientData.tls_read_mutex));
