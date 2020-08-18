@@ -4,7 +4,7 @@ This project extends the [aws-iot-device-sdk-embedded-C release v3.0.1](https://
 
 There is also a [sample application](https://github.com/aws-samples/aws-iot-device-sdk-embedded-C-http-proxy-support/tree/master/samples/linux/subscribe_publish_proxy_sample) that demonstrates how to enable HTTP proxy and perform MQTT subscribe and publish operations.
 
-On a high level, the following new proxy-related parameters are added to the `IoT_Client_Init_Params` struct in [`include/aws_iot_mqtt_client.h`](https://github.com/aws-samples/aws-iot-device-sdk-embedded-C/blob/master/include/aws_iot_mqtt_client.h).
+On a high level, the following new proxy-related parameters are added to the `IoT_Client_Init_Params` struct in [`include/aws_iot_mqtt_client.h`](https://github.com/aws-samples/aws-iot-device-sdk-embedded-c-http-proxy-support/blob/master/include/aws_iot_mqtt_client.h).
 
 
 ```
