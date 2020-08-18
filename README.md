@@ -20,7 +20,7 @@ char *pProxyPassword; ///< Pointer to a string defining the password for proxy a
 One can easily create an HTTP-proxy-enabled AWS IoT Client by providing these parameters upon client initialization. See the [sample application](https://github.com/aws-samples/aws-iot-device-sdk-embedded-C-http-proxy-support/tree/master/samples/linux/subscribe_publish_proxy_sample) for more information.
 ***
 
-### Patching your existing SDK library
+### Patch your existing SDK library
 
 Copy the `patch.diff` file to your current SDK library directory and apply the patch under that directory:
 
@@ -33,12 +33,12 @@ git apply patch.diff
 > ***NOTE:***  The patch file is based on the SDK version [Release v3.0.1](https://github.com/aws/aws-iot-device-sdk-embedded-C/releases/tag/v3.0.1). Any other versions or branches may not work.
 ***
 
-### Building the example
+### Build and run the sample application
 
 #### Linux Ubuntu 18.04.4 LTS
 All development and testing of the HTTP Proxy Sample has been performed on Linux Ubuntu 18.04.4 LTS.
 
-#### Installing Dependencies
+#### Install dependencies
 
 
 ```
@@ -49,24 +49,30 @@ sudo apt-get install build-essential \
 ```
 
 
-#### Getting the SDK library with HTTP proxy support
+#### Get AWS IoT Device SDK For Embedded C library (release version 3.0.1)
 
-
-```
-git clone https://github.com/aws-samples/aws-iot-device-sdk-c-http-proxy-support.git
-```
+Download the [SDK library v3.0.1](https://github.com/aws/aws-iot-device-sdk-embedded-C/releases/tag/v3.0.1) and unzip the archive.
 
 
 
-#### Getting mbedTLS
-Under the project root directory:
+#### Get mbedTLS
+Under the SDK root directory, run:
 
 
 ```
 wget -qO- https://github.com/ARMmbed/mbedtls/archive/mbedtls-2.16.7.tar.gz | tar xvz -C external_libs/mbedTLS --strip-components=1
 ```
 
+#### Apply patch to the SDK
+Copy the `patch.diff` file to the SDK root directory and apply the patch under that directory:
 
+
+```
+git apply patch.diff
+```
+
+#### Copy the sample application to SDK library
+Copy the `samples` directory to the SDK root directory.
 
 #### Configure the SDK with your device parameters
 
