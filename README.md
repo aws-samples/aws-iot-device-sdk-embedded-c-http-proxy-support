@@ -4,7 +4,7 @@ This project extends the [aws-iot-device-sdk-embedded-C release v3.0.1](https://
 
 There is also a [sample application](https://github.com/aws-samples/aws-iot-device-sdk-embedded-C-http-proxy-support/tree/master/samples/linux/subscribe_publish_proxy_sample) that demonstrates how to enable HTTP proxy and perform MQTT subscribe and publish operations.
 
-On a high level, the following new proxy-related parameters are added to the `IoT_Client_Init_Params` struct in [`include/aws_iot_mqtt_client.h`](https://github.com/aws-samples/aws-iot-device-sdk-embedded-c-http-proxy-support/blob/master/include/aws_iot_mqtt_client.h).
+On a high level, the following new proxy-related parameters are added to the `IoT_Client_Init_Params` struct in [`include/aws_iot_mqtt_client.h`](https://github.com/aws/aws-iot-device-sdk-embedded-C/blob/v3.0.1/include/aws_iot_mqtt_client.h).
 
 
 ```
@@ -78,7 +78,7 @@ Copy the `samples` directory to the SDK root directory.
 
 
 1. [Create and Activate a Device Certificate](https://docs.aws.amazon.com/iot/latest/developerguide/create-device-certificate.html)
-2. Copy the certificate, private key, and root CA certificate you created into the [`/certs`](https://github.com/aws-samples/aws-iot-device-sdk-embedded-C-http-proxy-support/tree/master/certs) directory.
+2. Copy the certificate, private key, and root CA certificate you created into the [`/certs`](https://github.com/aws/aws-iot-device-sdk-embedded-C/tree/v3.0.1/certs) directory.
 3. You must configure the sample with your own AWS IoT endpoint, private key, certificate, and root CA certificate. Proxy parameters are also configured here. Make those changes in the [`samples/linux/subscribe_publish_proxy_sample/aws_iot_config.h`](https://github.com/aws-samples/aws-iot-device-sdk-embedded-C-http-proxy-support/blob/master/samples/linux/subscribe_publish_proxy_sample/aws_iot_config.h) file. Open the `aws_iot_config.h` file, update the values for the following:
 
 ```
