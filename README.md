@@ -114,7 +114,7 @@ make -j4
 
 ### Limitations
 * The sum of the proxy username and password lengths are limited to 63 bytes long excluding the terminating null character.
-  * You may modify `HTTP_PROXY_CREDENTIALS_LEN_LIMIT` to avoid this limitation, but please confirm the limitations of proxy server.
+  * You may modify [`HTTP_PROXY_CREDENTIALS_LEN_LIMIT`](https://github.com/aws-samples/aws-iot-device-sdk-embedded-c-http-proxy-support/blob/bd0a46abd7a634605241a7798d4d6872b3bd7980/patch.diff#L127) to avoid this limitation, but please confirm the limitations of proxy server.
 * A buffer of 310 bytes would be used for the HTTP proxy connection.
 * A static buffer of 2KB would be used for debug logs when the debug flag is enabled.
 * The library is designed to be used with an HTTP proxy in a trusted network. Therefore the HTTP Connect Request is not sent with TLS encryption. This means the request (including the authentication credentials) may be intercepted and read by somebody else when accessing a remote proxy in a non-trusted network.
